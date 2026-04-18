@@ -1,0 +1,4 @@
+reflex
+pandas
+google-generativeai
+plotly
