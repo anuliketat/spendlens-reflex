@@ -5,18 +5,22 @@ Handles OAuth2 authentication and email message retrieval.
 
 import os
 import json
+from dotenv import load_dotenv
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+# Load environment variables from .env file
+load_dotenv()
+
 # Gmail API scope for read-only access to emails
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-# Store credentials in workspace root
-CREDENTIALS_FILE = "credentials.json"
-TOKEN_FILE = "token.json"
+# Store credentials in workspace root (configurable via env var)
+CREDENTIALS_FILE = os.getenv("GMAIL_CREDENTIALS_FILE", "credentials.json")
+TOKEN_FILE = os.getenv("GMAIL_TOKEN_FILE", "token.json")
 
 
 def get_gmail_service():

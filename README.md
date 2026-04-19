@@ -21,9 +21,10 @@ A personal finance dashboard built with [Reflex](https://reflex.dev) (Python).
 pip install -r requirements.txt
 ```
 
-Set your Hugging Face token:
+Set up your environment variables:
 ```bash
-export HF_TOKEN=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
+cp .env.example .env
+# Edit .env and add your Hugging Face token from https://huggingface.co/settings/tokens
 ```
 
 Initialize the database:
@@ -54,7 +55,7 @@ Import transactions directly from bank email alerts.
    - Download the credentials JSON
 
 3. **Configure SpendLens:**
-   - Place the downloaded `credentials.json` in the project root directory
+   - Place the downloaded `credentials.json` in the project root directory (or set `GMAIL_CREDENTIALS_FILE` in your `.env`)
    - First run will prompt you to authorize Gmail access
 
 4. **Import Transactions:**

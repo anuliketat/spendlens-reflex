@@ -3,20 +3,27 @@ Email Transaction Extraction using Fin-R1 model.
 Uses local model inference for fast transaction data extraction from emails.
 """
 
+import os
 import json
 import asyncio
 import httpx
 from typing import Optional, Dict, Any
 from datetime import datetime
 import torch
+from dotenv import load_dotenv
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Load model once
 _model = None
 _tokenizer = None
 
-HF_TOKEN = "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"
-MODEL_NAME = "mlabonne/Fin-R1"
+HF_TOKEN = os.getenv("HF_TOKEN")
+if not HF_TOKEN:
+    raise ValueError("HF_TOKEN environment variable is required. Set it in your .env file.")
+MODEL_NAME = os.getenv("MODEL_NAME", "mlabonne/Fin-R1")
 
 
 def _load_extraction_model():

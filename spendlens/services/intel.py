@@ -1,9 +1,15 @@
 import os
+from dotenv import load_dotenv
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import torch
 
-# HuggingFace token for model access
-hf_token = "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"
+# Load environment variables from .env file
+load_dotenv()
+
+# HuggingFace token for model access (from environment)
+hf_token = os.getenv("HF_TOKEN")
+if not hf_token:
+    raise ValueError("HF_TOKEN environment variable is required. Set it in your .env file.")
 model_name = "mlabonne/Fin-R1"
 
 # Configure 4-bit quantization for memory efficiency
