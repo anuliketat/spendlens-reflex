@@ -11,6 +11,8 @@ from spendlens.components import (
     drift,
     interventions,
     explorer,
+    upload,
+    email_import,
 )
 
 
@@ -33,5 +35,25 @@ def index() -> rx.Component:
     )
 
 
+def upload_page() -> rx.Component:
+    return rx.box(
+        upload.render(),
+        max_width="1200px",
+        margin="0 auto",
+        padding="1em",
+    )
+
+
+def email_import_page() -> rx.Component:
+    return rx.box(
+        email_import.render(),
+        max_width="1200px",
+        margin="0 auto",
+        padding="1em",
+    )
+
+
 app = rx.App()
 app.add_page(index, route="/")
+app.add_page(upload_page, route="/upload")
+app.add_page(email_import_page, route="/email_import")

@@ -1,4 +1,16 @@
 reflex
 pandas
-google-generativeai
 plotly
+pdfplumber
+openpyxl
+transformers
+torch
+accelerate
+bitsandbytes
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+python-dotenv
+httpx
+
+reflex==0.8.28.post1

@@ -17,7 +17,7 @@ def render() -> rx.Component:
         ),
         rx.cond(
             ~AppState.interventions,
-            rx.text("No intervention cards yet. Gemini will generate them from your habits."),
+            rx.text("No intervention cards yet. Fin-R1 will generate them from your habits."),
             rx.fragment(),
         ),
         padding="1em",

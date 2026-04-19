@@ -7,7 +7,7 @@ def render() -> rx.Component:
         rx.heading("Weekly Pulse", size="5"),
         rx.text("Budget used: "),
         rx.progress(
-            value=AppState.burn_rate.get("budget_pct", 0) * 100,
+            value=AppState.budget_pct_progress,
             max=100,
             color_scheme=rx.cond(
                 AppState.burn_rate["status"] == "on_track",

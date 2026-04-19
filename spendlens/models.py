@@ -1,9 +1,11 @@
 import reflex as rx
 from datetime import datetime
+from sqlmodel import Field
+from typing import Optional
 
 
 class Transaction(rx.Model, table=True):
-    id: int | None = None
+    id: Optional[int] = Field(default=None, primary_key=True)
     datetime: datetime
     amount: float
     merchant: str
@@ -16,7 +18,7 @@ class Transaction(rx.Model, table=True):
 
 
 class Budget(rx.Model, table=True):
-    id: int | None = None
+    id: Optional[int] = Field(default=None, primary_key=True)
     category: str
     user_set: float
     app_inferred: float
@@ -24,14 +26,14 @@ class Budget(rx.Model, table=True):
 
 
 class Archetype(rx.Model, table=True):
-    id: int | None = None
+    id: Optional[int] = Field(default=None, primary_key=True)
     label: str
     summary: str
     computed_at: datetime
 
 
 class Insight(rx.Model, table=True):
-    id: int | None = None
+    id: Optional[int] = Field(default=None, primary_key=True)
     section: str
     content: str
     computed_at: datetime
