@@ -23,6 +23,21 @@ _tokenizer = None
 HF_TOKEN = os.getenv("HF_TOKEN")
 if not HF_TOKEN:
     raise ValueError("HF_TOKEN environment variable is required. Set it in your .env file.")
+
+# Model configuration
+FAST_LLM_MODE = os.getenv("FAST_LLM_MODE", "false").lower() == "true"
+USE_LLM_FILTER = os.getenv("USE_LLM_FILTER", "true").lower() == "true"
+
+if FAST_LLM_MODE:
+    # Fast 3.8B model for quick classification (loads ~5x faster)
+    FILTER_MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
+    print("⚡ Using FAST mode: Phi-3-mini (3.8B parameters)")
+else:
+    # Accurate 32B model for best transaction extraction
+    FILTER_MODEL_NAME = os.getenv("MODEL_NAME", "mlabonne/Fin-R1")
+    print("🎯 Using ACCURATE mode: Fin-R1 (32B parameters)")
+
+# For transaction extraction, always use Fin-R1 (more accurate)
 MODEL_NAME = os.getenv("MODEL_NAME", "mlabonne/Fin-R1")
 
 
@@ -243,3 +258,135 @@ def batch_extract_transactions(emails: list) -> list:
         results.append(result)
     
     return results
+
+
+# Separate model instances for filtering (can be faster model)
+_filter_model = None
+_filter_tokenizer = None
+
+
+def _load_filter_model():
+    """Load model for sender filtering (can be smaller/faster than extraction model)."""
+    global _filter_model, _filter_tokenizer
+    
+    if _filter_model is not None:
+        return _filter_model, _filter_tokenizer
+    
+    if not USE_LLM_FILTER:
+        raise RuntimeError("LLM filtering is disabled")
+    
+    try:
+        # Use 4-bit quantization for faster loading
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+        )
+        
+        print(f"🤖 Loading filter model: {FILTER_MODEL_NAME}...")
+        _filter_tokenizer = AutoTokenizer.from_pretrained(
+            FILTER_MODEL_NAME,
+            token=HF_TOKEN,
+            trust_remote_code=True,
+        )
+        
+        _filter_model = AutoModelForCausalLM.from_pretrained(
+            FILTER_MODEL_NAME,
+            quantization_config=quantization_config,
+            device_map="auto",
+            token=HF_TOKEN,
+            trust_remote_code=True,
+            torch_dtype=torch.float16,
+        )
+        _filter_model.eval()
+        print(f"✓ Loaded filter model")
+        return _filter_model, _filter_tokenizer
+    except Exception as e:
+        print(f"⚠ Failed to load filter model: {e}")
+        raise
+
+
+def filter_senders_with_llm(senders_data: list[dict]) -> list[str]:
+    """
+    Use LLM to filter sender emails and identify true transaction alerts.
+    Uses FAST_LLM_MODE model (Phi-3-mini for speed, or Fin-R1 for accuracy).
+    
+    Args:
+        senders_data: List of dicts with 'email', 'name', 'subjects', 'count'
+    
+    Returns:
+        List of verified sender email addresses that are transaction-related
+    """
+    if not senders_data:
+        return []
+    
+    if not USE_LLM_FILTER:
+        print("⏭️  LLM filtering disabled (USE_LLM_FILTER=false), using rule-based only")
+        return [s['email'] for s in senders_data]
+    
+    # Build a concise prompt with sender info
+    sender_summaries = []
+    for s in senders_data[:15]:  # Limit to top 15 for speed
+        subjects_sample = s.get('subjects', [])[:2]  # First 2 subjects only
+        subjects_str = " | ".join(subjects_sample) if subjects_sample else "N/A"
+        summary = f"- {s['email']} ({s.get('name', 'Unknown')}): {subjects_str}"
+        sender_summaries.append(summary)
+    
+    prompt = f"""You are a financial email classifier. Analyze these sender emails and identify ONLY the ones sending REAL BANK TRANSACTION ALERTS (debit, credit, UPI, payment confirmations). Ignore marketing, offers, newsletters, OTPs, and login alerts.
+
+Senders:
+{chr(10).join(sender_summaries)}
+
+Return ONLY a JSON array of transaction sender emails:
+["email1@domain.com", "email2@domain.com"]
+
+Response:"""
+
+    try:
+        model, tokenizer = _load_filter_model()
+        
+        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024)
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=256,  # Shorter for speed
+                temperature=0.1,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        
+        response = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True).strip()
+        
+        # Parse JSON array response
+        try:
+            # Try to extract JSON array from the response
+            json_start = response.find('[')
+            json_end = response.rfind(']') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                transaction_senders = json.loads(json_str)
+                if isinstance(transaction_senders, list):
+                    print(f"✓ LLM filtered {len(senders_data)} → {len(transaction_senders)} transaction senders")
+                    return transaction_senders
+        except json.JSONDecodeError:
+            pass
+        
+        # Fallback: extract emails with regex
+        import re
+        email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+        found_emails = re.findall(email_pattern, response)
+        # Only return emails that were in the original list
+        valid_emails = [e for e in found_emails if any(s['email'] == e for s in senders_data)]
+        if valid_emails:
+            print(f"✓ LLM found {len(valid_emails)} transaction senders (regex fallback)")
+            return list(set(valid_emails))
+        
+        print("⚠ LLM returned no valid senders, using rule-based results")
+        return [s['email'] for s in senders_data]
+        
+    except Exception as e:
+        print(f"⚠ LLM filtering failed: {e}. Using rule-based results.")
+        return [s['email'] for s in senders_data]

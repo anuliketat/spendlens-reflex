@@ -3,6 +3,7 @@ from reflex.plugins.sitemap import SitemapPlugin
 
 config = rx.Config(
     app_name="spendlens",
-    api_url="http://localhost:8001",
+    frontend_port=3000,
+    backend_port=8000,
     disable_plugins=[SitemapPlugin],
 )

@@ -1,4 +1,5 @@
 import reflex as rx
+from sqlmodel import select
 from spendlens.models import Transaction
 from spendlens.services.analytics import compute_burn_rate, compute_merchant_habits
 from spendlens.services.intel import get_verdict
@@ -37,7 +38,7 @@ class AppState(rx.State):
     def load_dashboard(self):
         with rx.session() as session:
             txns = session.exec(
-                rx.select(Transaction)
+                select(Transaction)
             ).all()
             self.transactions = [
                 {
@@ -150,17 +151,24 @@ class AppState(rx.State):
             self.processing = False
 
     def fetch_email_banks(self):
-        """Fetch list of potential banks from Gmail inbox."""
+        """Fetch list of potential banks from Gmail inbox (last 1 year)."""
         self.processing = True
-        self.email_import_status = "Fetching emails from Gmail..."
+        self.email_import_status = "Connecting to Gmail... Please complete authentication in the browser popup."
+        yield  # Yield to prevent WebSocket timeout
         
         try:
             from spendlens.services.gmail_service import get_gmail_service, list_potential_banks
             
             service = get_gmail_service()
+            self.email_import_status = "✓ Gmail authenticated! Scanning for bank emails (last 1 year)..."
+            yield  # Yield during authentication
+            
+            self.email_import_status = "🤖 Analyzing senders with AI to find transaction alerts..."
+            yield  # Yield before LLM processing
             banks = list_potential_banks(service)
+            
             self.available_banks = banks
-            self.email_import_status = f"Found {len(banks)} potential bank senders"
+            self.email_import_status = f"✓ Found {len(banks)} verified transaction senders from last 1 year. Select banks to import."
             
         except FileNotFoundError as e:
             self.email_import_status = f"Error: {str(e)}"
@@ -168,6 +176,7 @@ class AppState(rx.State):
             self.email_import_status = f"Error fetching banks: {str(e)}"
         finally:
             self.processing = False
+            yield
 
     def import_from_email(self, banks: list[str]):
         """Import transactions from selected email senders."""
@@ -177,7 +186,9 @@ class AppState(rx.State):
         
         self.processing = True
         self.selected_banks = banks
-        self.email_import_status = "Fetching emails..."
+        total_banks = len(banks)
+        self.email_import_status = f"Starting import from {total_banks} bank(s)..."
+        yield
         
         try:
             from spendlens.services.gmail_service import get_gmail_service, get_emails_from_sender
@@ -186,11 +197,14 @@ class AppState(rx.State):
             service = get_gmail_service()
             all_emails = []
             
-            # Fetch emails from each selected bank
-            for bank in banks:
-                self.email_import_status = f"Fetching emails from {bank}..."
-                emails = get_emails_from_sender(service, bank, max_results=50)
+            # Fetch emails from each selected bank (last 1 year by default)
+            for i, bank in enumerate(banks, 1):
+                self.email_import_status = f"📧 Fetching from bank {i}/{total_banks}: {bank} (last 1 year)..."
+                yield  # Yield to prevent WebSocket timeout
+                emails = get_emails_from_sender(service, bank, max_results=500, last_year_only=True)
                 all_emails.extend(emails)
+                self.email_import_status = f"✓ Fetched {len(emails)} emails from {bank}"
+                yield
             
             if not all_emails:
                 self.email_import_status = "No emails found from selected banks"
@@ -198,15 +212,21 @@ class AppState(rx.State):
                 return
             
             # Extract transactions
-            self.email_import_status = f"Extracting transactions from {len(all_emails)} emails..."
+            self.email_import_status = f"🔍 Extracting transactions from {len(all_emails)} emails using AI..."
+            yield  # Yield to prevent WebSocket timeout
             extracted = batch_extract_transactions(all_emails)
+            
+            successful_extractions = sum(1 for t in extracted if t.get("success"))
+            self.email_import_status = f"✓ Extracted {successful_extractions} transactions from {len(all_emails)} emails"
+            yield  # Yield to prevent WebSocket timeout
             
             # Save to database
             self.email_import_status = "Saving transactions to database..."
             saved_count = 0
             
             with rx.session() as session:
-                for txn_data in extracted:
+                total_to_save = sum(1 for t in extracted if t.get("success") and t.get("amount", 0) > 0)
+                for i, txn_data in enumerate(extracted):
                     if txn_data.get("success") and txn_data.get("amount", 0) > 0:
                         try:
                             # Parse date
@@ -228,6 +248,11 @@ class AppState(rx.State):
                             )
                             session.add(transaction)
                             saved_count += 1
+                            
+                            # Yield every 10 transactions to prevent timeout
+                            if saved_count % 10 == 0:
+                                self.email_import_status = f"Saving transactions to database... ({saved_count}/{total_to_save})"
+                                yield
                         except Exception as e:
                             print(f"Error saving transaction: {e}")
                             continue
@@ -235,7 +260,7 @@ class AppState(rx.State):
                 session.commit()
             
             self.extracted_emails = extracted
-            self.email_import_status = f"✓ Successfully imported {saved_count} transactions from {len(all_emails)} emails"
+            self.email_import_status = f"✓ Successfully imported {saved_count} transactions from {len(all_emails)} emails (last 1 year)"
             
             # Reload dashboard
             self.load_dashboard()
@@ -246,3 +271,4 @@ class AppState(rx.State):
             self.email_import_status = f"Error importing emails: {str(e)}"
         finally:
             self.processing = False
+            yield

@@ -13,9 +13,22 @@ def render() -> rx.Component:
             rx.heading("Step 1: Fetch Bank Emails", size="4"),
             rx.text("Click below to scan your Gmail inbox for bank transaction emails."),
             rx.button(
-                "Fetch Available Banks",
+                rx.hstack(
+                    rx.cond(AppState.processing, rx.spinner(size="1")),
+                    rx.text("Fetch Available Banks"),
+                    spacing="2",
+                ),
                 on_click=AppState.fetch_email_banks,
                 is_disabled=AppState.processing,
+                color_scheme="blue",
+                size="3",
+                width="250px",
+                _hover={
+                    "box_shadow": "0 4px 12px rgba(0,0,0,0.15)",
+                    "transform": "translateY(-1px)",
+                },
+                transition="all 0.2s ease",
+                cursor="pointer",
             ),
             margin_bottom="2em",
         ),
@@ -24,15 +37,50 @@ def render() -> rx.Component:
         rx.cond(
             AppState.email_import_status,
             rx.box(
-                rx.cond(
-                    AppState.processing,
-                    rx.spinner(),
-                    rx.text(AppState.email_import_status),
+                rx.hstack(
+                    rx.cond(
+                        AppState.processing,
+                        rx.spinner(size="2"),
+                        rx.icon(tag="info", color="blue"),
+                    ),
+                    rx.text(
+                        AppState.email_import_status,
+                        color=rx.cond(
+                            AppState.email_import_status.contains("Error"),
+                            "red",
+                            rx.cond(
+                                AppState.email_import_status.contains("Successfully"),
+                                "green",
+                                "black",
+                            ),
+                        ),
+                        font_weight="medium",
+                    ),
+                    spacing="3",
+                    align="center",
                 ),
                 padding="1em",
-                background_color="#f0f0f0",
-                border_radius="6px",
+                background_color=rx.cond(
+                    AppState.email_import_status.contains("Error"),
+                    "#fee2e2",
+                    rx.cond(
+                        AppState.email_import_status.contains("Successfully"),
+                        "#dcfce7",
+                        "#f0f0f0",
+                    ),
+                ),
+                border_radius="8px",
                 margin_bottom="1em",
+                border="1px solid",
+                border_color=rx.cond(
+                    AppState.email_import_status.contains("Error"),
+                    "#ef4444",
+                    rx.cond(
+                        AppState.email_import_status.contains("Successfully"),
+                        "#22c55e",
+                        "#d1d5db",
+                    ),
+                ),
             ),
         ),
         
@@ -53,10 +101,21 @@ def render() -> rx.Component:
                 ),
                 rx.divider(margin_y="1em"),
                 rx.button(
-                    "Import Selected Banks",
+                    rx.hstack(
+                        rx.cond(AppState.processing, rx.spinner(size="1")),
+                        rx.text("Import Selected Banks"),
+                        spacing="2",
+                    ),
                     on_click=lambda: AppState.import_from_email(AppState.available_banks),
                     color_scheme="green",
-                    is_disabled=AppState.processing | (AppState.available_banks == []),
+                    size="3",
+                    is_disabled=AppState.processing | (AppState.available_banks.length() == 0),
+                    _hover={
+                        "box_shadow": "0 4px 12px rgba(0,0,0,0.15)",
+                        "transform": "translateY(-1px)",
+                    },
+                    transition="all 0.2s ease",
+                    cursor="pointer",
                 ),
                 margin_bottom="2em",
             ),
