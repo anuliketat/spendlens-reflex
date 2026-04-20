@@ -22,4 +22,7 @@ config = rx.Config(
     backend_port=8000,
     api_url=API_URL,
     disable_plugins=[SitemapPlugin],
+    # No timeout limit - connection should never drop regardless of operation duration
+    timeout_client=3600,  # 1 hour (effectively no limit for practical use)
+    timeout_fastapi=3600,  # 1 hour (effectively no limit for practical use)
 )

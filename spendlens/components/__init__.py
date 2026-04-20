@@ -1,12 +1,15 @@
-from . import header
-from . import live_feed
-from . import weekly_pulse
-from . import monthly_battle
-from . import merchant_lens
-from . import two_tier_map
-from . import archetype
-from . import drift
-from . import interventions
-from . import explorer
-from . import upload
-from . import email_import
+from . import (
+    header,
+    live_feed,
+    weekly_pulse,
+    monthly_battle,
+    merchant_lens,
+    two_tier_map,
+    archetype,
+    drift,
+    interventions,
+    explorer,
+    upload,
+    email_import,
+    navigation,
+)

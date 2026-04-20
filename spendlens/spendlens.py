@@ -13,47 +13,45 @@ from spendlens.components import (
     explorer,
     upload,
     email_import,
+    navigation,
 )
 
 
 def index() -> rx.Component:
     return rx.box(
-        header.render(),
-        live_feed.render(),
-        weekly_pulse.render(),
-        monthly_battle.render(),
-        merchant_lens.render(),
-        two_tier_map.render(),
-        archetype.render(),
-        drift.render(),
-        interventions.render(),
-        explorer.render(),
-        on_mount=AppState.load_dashboard,
-        max_width="1200px",
-        margin="0 auto",
-        padding="1em",
-    )
-
-
-def upload_page() -> rx.Component:
-    return rx.box(
-        upload.render(),
-        max_width="1200px",
-        margin="0 auto",
-        padding="1em",
-    )
-
-
-def email_import_page() -> rx.Component:
-    return rx.box(
-        email_import.render(),
-        max_width="1200px",
-        margin="0 auto",
-        padding="1em",
+        navigation.render(),
+        rx.box(
+            rx.cond(
+                AppState.current_page == "dashboard",
+                rx.box(
+                    header.render(),
+                    live_feed.render(),
+                    weekly_pulse.render(),
+                    monthly_battle.render(),
+                    merchant_lens.render(),
+                    two_tier_map.render(),
+                    archetype.render(),
+                    drift.render(),
+                    interventions.render(),
+                    explorer.render(),
+                    on_mount=AppState.load_dashboard,
+                ),
+                rx.cond(
+                    AppState.current_page == "upload",
+                    upload.render(),
+                    rx.cond(
+                        AppState.current_page == "email_import",
+                        email_import.render(),
+                    ),
+                ),
+            ),
+            margin_left="250px",
+            padding="1em",
+            background="#111827",
+            min_height="100vh",
+        ),
     )
 
 
 app = rx.App()
 app.add_page(index, route="/")
-app.add_page(upload_page, route="/upload")
-app.add_page(email_import_page, route="/email_import")

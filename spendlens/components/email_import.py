@@ -12,11 +12,11 @@ def render() -> rx.Component:
     return rx.box(
         # Header
         rx.vstack(
-            rx.heading("Import Bank Transactions from Gmail", size="5"),
+            rx.heading("Import Bank Transactions from Gmail", size="5", color="white"),
             rx.text(
                 "Seamlessly extract transaction data from your bank emails. Select your banks and time period to get started.",
                 font_size="14px",
-                color="gray"
+                color="#9ca3af"
             ),
             spacing="1",
             margin_bottom="2em",
@@ -30,10 +30,10 @@ def render() -> rx.Component:
                 color_scheme="blue",
                 font_size="12px"
             ),
-            rx.heading("Discover Your Banks", size="4"),
+            rx.heading("Discover Your Banks", size="4", color="white"),
             rx.text(
                 "Scan your Gmail inbox to automatically detect bank transaction senders.",
-                color="gray",
+                color="#9ca3af",
                 font_size="14px"
             ),
             
@@ -122,6 +122,7 @@ def render() -> rx.Component:
                             rx.text(
                                 AppState.email_import_status,
                                 font_size="14px",
+                                color="white",
                                 flex="1"
                             ),
                             spacing="3",
@@ -131,22 +132,22 @@ def render() -> rx.Component:
                         padding="12px 16px",
                         background=rx.cond(
                             AppState.email_import_status.contains("Error"),
-                            "#fef2f2",
+                            "#450a0a",
                             rx.cond(
                                 AppState.email_import_status.contains("✓"),
-                                "#f0fdf4",
-                                "#f0f9ff"
+                                "#064e3b",
+                                "#1e3a8a"
                             )
                         ),
                         border_radius="8px",
                         border="1px solid",
                         border_color=rx.cond(
                             AppState.email_import_status.contains("Error"),
-                            "#fecaca",
+                            "#7f1d1d",
                             rx.cond(
                                 AppState.email_import_status.contains("✓"),
-                                "#86efac",
-                                "#bfdbfe"
+                                "#065f46",
+                                "#1e40af"
                             )
                         ),
                         width="100%"
@@ -158,9 +159,9 @@ def render() -> rx.Component:
             
             spacing="3",
             padding="20px",
-            background="#f9fafb",
+            background="#1f2937",
             border_radius="12px",
-            border="1px solid #e5e7eb",
+            border="1px solid #374151",
             margin_bottom="2em",
         ),
         
@@ -174,11 +175,11 @@ def render() -> rx.Component:
                     color_scheme="blue",
                     font_size="12px"
                 ),
-                rx.heading("Select Banks & Time Period", size="4"),
+                rx.heading("Select Banks & Time Period", size="4", color="white"),
                 
                 # Bank Selection
                 rx.vstack(
-                    rx.heading("Choose Banks to Import", size="5", margin_bottom="1"),
+                    rx.heading("Choose Banks to Import", size="5", margin_bottom="1", color="white"),
                     rx.box(
                         rx.vstack(
                             rx.foreach(
@@ -196,12 +197,13 @@ def render() -> rx.Component:
                                                 bank["email"]
                                             ),
                                             font_weight="600",
-                                            font_size="14px"
+                                            font_size="14px",
+                                            color="white"
                                         ),
                                         rx.text(
                                             bank["email"],
                                             font_size="12px",
-                                            color="gray"
+                                            color="#9ca3af"
                                         ),
                                         spacing="0",
                                     ),
@@ -215,7 +217,7 @@ def render() -> rx.Component:
                                     align="center",
                                     padding="12px",
                                     width="100%",
-                                    _hover={"background": "#f3f4f6"},
+                                    _hover={"background": "#374151"},
                                     border_radius="8px",
                                 ),
                             ),
@@ -223,16 +225,18 @@ def render() -> rx.Component:
                             width="100%"
                         ),
                         padding="12px",
-                        background="white",
-                        border="1px solid #e5e7eb",
+                        background="#1f2937",
+                        border="1px solid #374151",
                         border_radius="8px",
+                        max_height="400px",
+                        overflow_y="auto",
                     ),
                     spacing="2",
                 ),
                 
                 # Time Period Selection
                 rx.vstack(
-                    rx.heading("Select Time Period", size="5", margin_bottom="1"),
+                    rx.heading("Select Time Period", size="5", margin_bottom="1", color="white"),
                     rx.hstack(
                         rx.button(
                             "Last 1 Year",
@@ -296,7 +300,7 @@ def render() -> rx.Component:
                                 value=AppState.custom_start_date,
                                 size="2"
                             ),
-                            rx.text("to", color="gray"),
+                            rx.text("to", color="#9ca3af"),
                             rx.input(
                                 type_="date",
                                 on_change=lambda v: AppState.set_custom_dates(AppState.custom_start_date, v),
@@ -345,9 +349,9 @@ def render() -> rx.Component:
                 
                 spacing="4",
                 padding="20px",
-                background="#f9fafb",
+                background="#1f2937",
                 border_radius="12px",
-                border="1px solid #e5e7eb",
+                border="1px solid #374151",
                 margin_bottom="2em",
             )
         ),
@@ -362,7 +366,32 @@ def render() -> rx.Component:
                     color_scheme="blue",
                     font_size="12px"
                 ),
-                rx.heading("Importing Transactions", size="4"),
+                rx.heading("Importing Transactions", size="4", color="white"),
+                
+                # Selected senders display
+                rx.cond(
+                    AppState.selected_banks.length() > 0,
+                    rx.box(
+                        rx.vstack(
+                            rx.heading("Fetching from Selected Senders:", size="5", margin_bottom="0.5", color="white"),
+                            rx.foreach(
+                                AppState.selected_banks,
+                                lambda bank_email: rx.hstack(
+                                    rx.icon(tag="mail", size=16, color="#3b82f6"),
+                                    rx.text(bank_email, font_size="13px", color="#9ca3af"),
+                                    spacing="2",
+                                    align="center"
+                                )
+                            ),
+                            spacing="1",
+                        ),
+                        padding="12px 16px",
+                        background="#1e3a8a",
+                        border="1px solid #1e40af",
+                        border_radius="8px",
+                        margin_bottom="1em",
+                    )
+                ),
                 
                 rx.progress(
                     value=AppState.email_import_progress / AppState.email_import_progress_max,
@@ -378,12 +407,13 @@ def render() -> rx.Component:
                             rx.text(
                                 AppState.email_import_status,
                                 font_size="14px",
-                                font_weight="500"
+                                font_weight="500",
+                                color="white"
                             ),
                             rx.text(
                                 f"Progress: {AppState.email_import_progress}/{AppState.email_import_progress_max}",
                                 font_size="12px",
-                                color="gray"
+                                color="#9ca3af"
                             ),
                             spacing="1",
                             flex="1"
@@ -393,16 +423,16 @@ def render() -> rx.Component:
                         width="100%"
                     ),
                     padding="16px",
-                    background="white",
+                    background="#1f2937",
                     border_radius="8px",
-                    border="1px solid #e5e7eb",
+                    border="1px solid #374151",
                 ),
                 
                 spacing="3",
                 padding="20px",
-                background="#f9fafb",
+                background="#1f2937",
                 border_radius="12px",
-                border="1px solid #e5e7eb",
+                border="1px solid #374151",
                 margin_bottom="2em",
             )
         ),
@@ -417,7 +447,7 @@ def render() -> rx.Component:
                     color_scheme="blue",
                     font_size="12px"
                 ),
-                rx.heading("Import Complete!", size="4"),
+                rx.heading("Import Complete!", size="4", color="white"),
                 
                 rx.box(
                     rx.hstack(
@@ -426,12 +456,13 @@ def render() -> rx.Component:
                             rx.text(
                                 f"✓ Successfully imported {AppState.total_transactions_imported} transactions",
                                 font_weight="600",
-                                font_size="14px"
+                                font_size="14px",
+                                color="white"
                             ),
                             rx.text(
                                 "Your data is now synced and insights are being updated on the main dashboard.",
                                 font_size="12px",
-                                color="gray"
+                                color="#9ca3af"
                             ),
                             spacing="1",
                             flex="1"
@@ -441,8 +472,8 @@ def render() -> rx.Component:
                         width="100%"
                     ),
                     padding="16px",
-                    background="#f0fdf4",
-                    border="1px solid #86efac",
+                    background="#064e3b",
+                    border="1px solid #065f46",
                     border_radius="8px",
                 ),
                 
@@ -477,17 +508,17 @@ def render() -> rx.Component:
                 rx.cond(
                     AppState.extracted_emails.length() > 0,
                     rx.vstack(
-                        rx.heading("Imported Transactions", size="5", margin_bottom="1"),
+                        rx.heading("Imported Transactions", size="5", margin_bottom="1", color="white"),
                         rx.box(
                             rx.table.root(
                                 rx.table.header(
                                     rx.table.row(
-                                        rx.table.column_header_cell("Date"),
-                                        rx.table.column_header_cell("Time"),
-                                        rx.table.column_header_cell("Merchant"),
-                                        rx.table.column_header_cell("Amount"),
-                                        rx.table.column_header_cell("Type"),
-                                        rx.table.column_header_cell("Status"),
+                                        rx.table.column_header_cell("Date", color="white"),
+                                        rx.table.column_header_cell("Time", color="white"),
+                                        rx.table.column_header_cell("Merchant", color="white"),
+                                        rx.table.column_header_cell("Amount", color="white"),
+                                        rx.table.column_header_cell("Type", color="white"),
+                                        rx.table.column_header_cell("Status", color="white"),
                                     ),
                                 ),
                                 rx.table.body(
@@ -496,20 +527,20 @@ def render() -> rx.Component:
                                         lambda txn: rx.cond(
                                             txn["success"],
                                             rx.table.row(
-                                                rx.table.cell(txn.get("date", "—")),
-                                                rx.table.cell(txn.get("time", "—")),
-                                                rx.table.cell(txn.get("merchant", "—")),
-                                                rx.table.cell(f"₹{txn.get('amount', 0):.2f}"),
-                                                rx.table.cell(txn.get("type", "—")),
-                                                rx.table.cell("✓", color="green"),
+                                                rx.table.cell(txn.get("date", "—"), color="white"),
+                                                rx.table.cell(txn.get("time", "—"), color="white"),
+                                                rx.table.cell(txn.get("merchant", "—"), color="white"),
+                                                rx.table.cell(f"₹{txn.get('amount', 0):.2f}", color="white"),
+                                                rx.table.cell(txn.get("type", "—"), color="white"),
+                                                rx.table.cell("✓", color="#10b981"),
                                             ),
                                             rx.table.row(
-                                                rx.table.cell("—"),
-                                                rx.table.cell("—"),
-                                                rx.table.cell(txn.get("description", "Error")),
-                                                rx.table.cell("—"),
-                                                rx.table.cell("—"),
-                                                rx.table.cell("✗", color="red"),
+                                                rx.table.cell("—", color="white"),
+                                                rx.table.cell("—", color="white"),
+                                                rx.table.cell(txn.get("description", "Error"), color="white"),
+                                                rx.table.cell("—", color="white"),
+                                                rx.table.cell("—", color="white"),
+                                                rx.table.cell("✗", color="#ef4444"),
                                             ),
                                         ),
                                     ),
@@ -517,6 +548,9 @@ def render() -> rx.Component:
                             ),
                             overflow="auto",
                             width="100%",
+                            background="#1f2937",
+                            border="1px solid #374151",
+                            border_radius="8px",
                         ),
                         spacing="2",
                     )
@@ -524,29 +558,11 @@ def render() -> rx.Component:
                 
                 spacing="4",
                 padding="20px",
-                background="#f9fafb",
+                background="#1f2937",
                 border_radius="12px",
-                border="1px solid #e5e7eb",
+                border="1px solid #374151",
                 margin_bottom="2em",
             )
-        ),
-        
-        # Help section
-        rx.vstack(
-            rx.heading("Setup Instructions", size="5"),
-            rx.unordered_list(
-                rx.list_item("1. Go to Google Cloud Console and create a project"),
-                rx.list_item("2. Enable the Gmail API"),
-                rx.list_item("3. Create OAuth 2.0 credentials (Desktop application)"),
-                rx.list_item("4. Download credentials.json and place in project root"),
-                rx.list_item("5. First run will prompt for Gmail access authorization"),
-            ),
-            color="gray",
-            font_size="13px",
-            padding="16px",
-            background="#f3f4f6",
-            border_radius="8px",
-            margin_bottom="2em",
         ),
         
         padding="2em",

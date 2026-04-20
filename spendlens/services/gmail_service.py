@@ -18,10 +18,12 @@ load_dotenv()
 
 # Import LLM filtering (optional - falls back gracefully)
 try:
-    from spendlens.services.email_extraction import filter_senders_with_llm
-    LLM_FILTER_AVAILABLE = True
+    from spendlens.services.email_extraction import filter_senders_with_llm, suggest_search_patterns
+    LLM_FILTER_AVAILABLE = False  # Disabled to prevent timeout
+    LLM_PATTERN_SUGGESTION_AVAILABLE = True
 except ImportError:
     LLM_FILTER_AVAILABLE = False
+    LLM_PATTERN_SUGGESTION_AVAILABLE = False
 
 # Gmail API scope for read-only access to emails
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
@@ -175,33 +177,141 @@ def list_potential_banks(service):
     Uses strict filtering to exclude ads, newsletters, and non-bank emails.
     Fetches last 1 year of emails by default.
     Returns list of sender email addresses that are verified banks.
+    
+    This is a generator that yields progress updates during processing.
     """
+    print("[Gmail Service] Starting list_potential_banks...")
     date_query = _get_last_year_date_query()
+    print(f"[Gmail Service] Date query: {date_query}")
     
     # Build a more specific query targeting transaction notifications
-    transaction_patterns = [
+    default_transaction_patterns = [
         'subject:debit', 'subject:credit', 'subject:transaction',
         'subject:UPI', 'subject:payment', 'subject:spent',
         'subject:alert', 'subject:statement',
     ]
     
-    # Search with multiple queries for better coverage
-    all_senders = {}  # email -> {name, subjects: [], count}
-    
-    for pattern in transaction_patterns[:4]:  # Limit to avoid rate limits
-        query = f'{pattern} {date_query}'
+    # Use LLM to suggest optimal patterns if available
+    if LLM_PATTERN_SUGGESTION_AVAILABLE:
+        print("[Gmail Service] Using LLM to suggest optimal search patterns...")
+        yield {
+            'type': 'llm_analysis',
+            'message': "Analyzing email patterns with AI to optimize search..."
+        }
         
         try:
-            results = service.users().messages().list(
+            # Get a sample of recent emails to analyze subjects
+            sample_query = f'inbox {date_query}'
+            sample_results = service.users().messages().list(
                 userId='me',
-                q=query,
-                maxResults=100
+                q=sample_query,
+                maxResults=50
             ).execute()
             
-            messages = results.get('messages', [])
+            sample_messages = sample_results.get('messages', [])
+            sample_subjects = []
             
-            for msg in messages:
+            for msg in sample_messages[:20]:  # Analyze first 20 emails
                 try:
+                    m = service.users().messages().get(
+                        userId='me',
+                        id=msg['id'],
+                        format='metadata'
+                    ).execute()
+                    
+                    headers = m.get('payload', {}).get('headers', [])
+                    subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
+                    if subject:
+                        sample_subjects.append(subject)
+                except:
+                    continue
+            
+            if sample_subjects:
+                print(f"[Gmail Service] Analyzing {len(sample_subjects)} email subjects...")
+                transaction_patterns = suggest_search_patterns(sample_subjects)
+                print(f"[Gmail Service] LLM suggested patterns: {transaction_patterns}")
+            else:
+                print("[Gmail Service] No sample subjects found, using default patterns")
+                transaction_patterns = default_transaction_patterns
+        except Exception as e:
+            print(f"[Gmail Service] LLM pattern suggestion failed: {e}, using defaults")
+            transaction_patterns = default_transaction_patterns
+    else:
+        print("[Gmail Service] LLM pattern suggestion not available, using defaults")
+        transaction_patterns = default_transaction_patterns
+    
+    print(f"[Gmail Service] Transaction patterns: {transaction_patterns}")
+    
+    # Search with multiple queries for better coverage
+    all_senders = {}  # email -> {name, subjects: [], count}
+    total_patterns = len(transaction_patterns)
+    
+    for i, pattern in enumerate(transaction_patterns):  # Process all patterns for comprehensive coverage
+        query = f'{pattern} {date_query}'
+        print(f"[Gmail Service] Processing pattern {i+1}/{total_patterns}: {query}")
+        
+        # Yield progress for pattern start
+        yield {
+            'type': 'pattern_start',
+            'pattern': i+1,
+            'total_patterns': total_patterns,
+            'message': f"Scanning pattern {i+1}/{total_patterns}: {pattern}"
+        }
+        
+        try:
+            # Use pagination to fetch ALL emails, not just first 500
+            messages = []
+            page_token = None
+            page_count = 0
+            while True:
+                page_count += 1
+                print(f"[Gmail Service] Fetching page {page_count} for pattern {i+1}...")
+                
+                # Yield progress for page fetch
+                yield {
+                    'type': 'page_fetch',
+                    'pattern': i+1,
+                    'total_patterns': total_patterns,
+                    'page': page_count,
+                    'message': f"Fetching page {page_count} for pattern {i+1}..."
+                }
+                
+                results = service.users().messages().list(
+                    userId='me',
+                    q=query,
+                    maxResults=500,
+                    pageToken=page_token
+                ).execute()
+                
+                batch = results.get('messages', [])
+                messages.extend(batch)
+                print(f"[Gmail Service] Page {page_count}: fetched {len(batch)} emails (total: {len(messages)})")
+                
+                # Check if there are more pages
+                if 'nextPageToken' not in results:
+                    print(f"[Gmail Service] No more pages for pattern {i+1}")
+                    break
+                page_token = results['nextPageToken']
+                
+                # Safety limit to prevent infinite loops (max 10 pages = 5000 emails per pattern)
+                if len(messages) >= 5000:
+                    print(f"[Gmail Service] Reached safety limit of 5000 emails for pattern {i+1}")
+                    break
+            
+            print(f"[Gmail Service] Processing {len(messages)} emails for pattern {i+1}...")
+            for msg_idx, msg in enumerate(messages):
+                try:
+                    # Yield progress every 10 messages to keep connection alive
+                    if msg_idx % 10 == 0:
+                        yield {
+                            'type': 'message_process',
+                            'pattern': i+1,
+                            'total_patterns': total_patterns,
+                            'message_idx': msg_idx,
+                            'total_messages': len(messages),
+                            'message': f"Processing email {msg_idx}/{len(messages)} for pattern {i+1}..."
+                        }
+                    
                     m = service.users().messages().get(
                         userId='me',
                         id=msg['id'],
@@ -236,12 +346,30 @@ def list_potential_banks(service):
                 except HttpError as e:
                     print(f"Error fetching message {msg['id']}: {e}")
                     continue
+            
+            # Yield progress for pattern completion
+            yield {
+                'type': 'pattern_complete',
+                'pattern': i+1,
+                'total_patterns': total_patterns,
+                'emails_found': len(messages),
+                'message': f"Completed pattern {i+1}/{total_patterns}: found {len(messages)} emails"
+            }
                     
         except HttpError as error:
-            print(f"Query error for '{pattern}': {error}")
+            print(f"[Gmail Service] Query error for '{pattern}': {error}")
             continue
     
+    print(f"[Gmail Service] Total unique senders found: {len(all_senders)}")
+    
+    # Yield progress for filtering
+    yield {
+        'type': 'filtering',
+        'message': f"Filtering {len(all_senders)} unique senders..."
+    }
+    
     # Filter to only verified bank senders using rules-based filtering first
+    print("[Gmail Service] Filtering senders with rules-based filtering...")
     rule_filtered = []
     for email, data in all_senders.items():
         # Check if sender appears in multiple transaction emails
@@ -253,7 +381,10 @@ def list_potential_banks(service):
             for subject in data['subjects'][:3]  # Check first 3 subjects
         )
         
-        if (is_recurring or has_valid_subjects) and _is_likely_bank_sender(email, data['name'], data['subjects'][0] if data['subjects'] else ""):
+        # More permissive: include if recurring OR has valid subjects OR has bank domain
+        is_bank_domain = any(bank_domain in email.lower() for bank_domain in BANK_DOMAINS)
+        
+        if is_recurring or has_valid_subjects or is_bank_domain:
             rule_filtered.append({
                 'email': email,
                 'name': data['name'],
@@ -261,28 +392,45 @@ def list_potential_banks(service):
                 'count': data['count']
             })
     
+    print(f"[Gmail Service] Rule-based filtering found {len(rule_filtered)} potential banks")
+    
     # Further refine with LLM if available
     if LLM_FILTER_AVAILABLE and len(rule_filtered) > 0:
-        print(f"🤖 Using LLM to filter {len(rule_filtered)} potential senders...")
+        print(f"[Gmail Service] Using LLM to filter {len(rule_filtered)} potential senders...")
         llm_filtered = filter_senders_with_llm(rule_filtered)
-        return sorted([{'email': s.get('email', s) if isinstance(s, dict) else s, 
+        print(f"[Gmail Service] LLM filtering returned {len(llm_filtered)} banks")
+        result = sorted([{'email': s.get('email', s) if isinstance(s, dict) else s, 
                         'name': s.get('name', '') if isinstance(s, dict) else '', 
                         'count': s.get('count', 0) if isinstance(s, dict) else 0} 
                       for s in llm_filtered], key=lambda x: x['email'])
+    else:
+        # Fallback to rule-based only
+        print(f"[Gmail Service] Using rule-based filtering result (LLM disabled)")
+        result = sorted([{'email': s['email'], 'name': s['name'], 'count': s['count']} 
+                        for s in rule_filtered], key=lambda x: x['email'])
     
-    # Fallback to rule-based only
-    return sorted([{'email': s['email'], 'name': s['name'], 'count': s['count']} 
-                   for s in rule_filtered], key=lambda x: x['email'])
+    # Yield final result
+    yield {
+        'type': 'complete',
+        'banks': result,
+        'message': f"Found {len(result)} verified transaction senders"
+    }
+    
+    return result
 
 
 def get_emails_from_sender(service, sender_email: str, max_results: int = 500, last_year_only: bool = True, start_date=None, end_date=None):
     """
-    Fetch all emails from a specific sender.
+    Fetch all emails from a specific sender using pagination.
     By default, fetches last 1 year of emails.
     Can optionally specify custom start_date and end_date (datetime objects).
     Returns list of email IDs and snippets.
+    
+    This is a generator that yields progress updates during processing.
     """
     try:
+        print(f"[Gmail Service] Fetching emails from {sender_email}...")
+        
         # Build query with date filter
         query = f'from:{sender_email}'
         
@@ -295,17 +443,77 @@ def get_emails_from_sender(service, sender_email: str, max_results: int = 500, l
             date_query = _get_last_year_date_query()
             query = f'{query} {date_query}'
         
-        results = service.users().messages().list(
-            userId='me',
-            q=query,
-            maxResults=max_results
-        ).execute()
+        print(f"[Gmail Service] Query: {query}")
         
-        messages = results.get('messages', [])
+        # Yield initial progress
+        yield {
+            'type': 'fetch_start',
+            'sender': sender_email,
+            'message': f"Fetching emails from {sender_email}..."
+        }
+        
+        # Use pagination to fetch ALL emails, not just first batch
+        messages = []
+        page_token = None
+        page_count = 0
+        while True:
+            page_count += 1
+            print(f"[Gmail Service] Fetching page {page_count} for {sender_email}...")
+            
+            # Yield progress for page fetch
+            yield {
+                'type': 'page_fetch',
+                'sender': sender_email,
+                'page': page_count,
+                'message': f"Fetching page {page_count} for {sender_email}..."
+            }
+            
+            results = service.users().messages().list(
+                userId='me',
+                q=query,
+                maxResults=500,
+                pageToken=page_token
+            ).execute()
+            
+            batch = results.get('messages', [])
+            messages.extend(batch)
+            print(f"[Gmail Service] Page {page_count}: fetched {len(batch)} emails (total: {len(messages)})")
+            
+            # Check if there are more pages
+            if 'nextPageToken' not in results:
+                print(f"[Gmail Service] No more pages for {sender_email}")
+                break
+            page_token = results['nextPageToken']
+            
+            # Safety limit to prevent infinite loops (max 20 pages = 10000 emails)
+            if len(messages) >= 10000:
+                print(f"[Gmail Service] Reached safety limit for {sender_email}")
+                break
+        
+        print(f"[Gmail Service] Processing {len(messages)} emails for {sender_email}...")
+        
+        # Yield progress for email processing
+        yield {
+            'type': 'process_start',
+            'sender': sender_email,
+            'total_emails': len(messages),
+            'message': f"Processing {len(messages)} emails from {sender_email}..."
+        }
+        
         email_data = []
         
-        for msg in messages:
+        for msg_idx, msg in enumerate(messages):
             try:
+                # Yield progress every 10 messages
+                if msg_idx % 10 == 0:
+                    yield {
+                        'type': 'message_process',
+                        'sender': sender_email,
+                        'message_idx': msg_idx,
+                        'total_messages': len(messages),
+                        'message': f"Processing email {msg_idx}/{len(messages)} from {sender_email}..."
+                    }
+                
                 m = service.users().messages().get(
                     userId='me',
                     id=msg['id'],
@@ -331,10 +539,23 @@ def get_emails_from_sender(service, sender_email: str, max_results: int = 500, l
                 print(f"Error fetching email {msg['id']}: {e}")
                 continue
         
+        # Yield final result
+        yield {
+            'type': 'complete',
+            'sender': sender_email,
+            'emails': email_data,
+            'message': f"Fetched {len(email_data)} emails from {sender_email}"
+        }
+        
         return email_data
     
     except HttpError as error:
-        print(f"An error occurred: {error}")
+        print(f"[Gmail Service] Error fetching from {sender_email}: {error}")
+        yield {
+            'type': 'error',
+            'sender': sender_email,
+            'message': f"Error fetching emails from {sender_email}: {error}"
+        }
         return []
 
 
