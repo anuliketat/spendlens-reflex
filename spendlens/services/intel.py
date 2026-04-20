@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import torch
+import warnings
 
 # Load environment variables from .env file
 load_dotenv()
@@ -9,8 +10,18 @@ load_dotenv()
 # HuggingFace token for model access (from environment)
 hf_token = os.getenv("HF_TOKEN")
 if not hf_token:
-    raise ValueError("HF_TOKEN environment variable is required. Set it in your .env file.")
-model_name = "mlabonne/Fin-R1"
+    warnings.warn(
+        "⚠️  HF_TOKEN environment variable is NOT set!\n"
+        "   LLM-based features will not work.\n"
+        "   To enable:\n"
+        "   1. Copy .env.example to .env\n"
+        "   2. Get token from https://huggingface.co/settings/tokens\n"
+        "   3. Set HF_TOKEN in your .env file\n"
+        "   4. Restart your application",
+        UserWarning
+    )
+    hf_token = None
+model_name = os.getenv("MODEL_NAME", "microsoft/Phi-3-medium-128k-instruct")
 
 # Configure 4-bit quantization for memory efficiency
 quantization_config = BitsAndBytesConfig(
@@ -31,6 +42,13 @@ def _load_model():
     
     if _model is not None:
         return _model, _tokenizer
+    
+    if not hf_token:
+        raise RuntimeError(
+            "Cannot load model: HF_TOKEN is not set.\n"
+            "Please set HF_TOKEN in your .env file.\n"
+            "Get token from: https://huggingface.co/settings/tokens"
+        )
     
     try:
         # Load tokenizer
@@ -72,6 +90,14 @@ def _load_model():
             _model.eval()
             return _model, _tokenizer
         raise
+    except Exception as e:
+        error_msg = str(e)
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            raise RuntimeError(f"Token authentication failed: HuggingFace token is expired or invalid. Please update HF_TOKEN in .env file.")
+        elif "404" in error_msg or "Not Found" in error_msg:
+            raise RuntimeError(f"Model '{model_name}' not found. Please check MODEL_NAME in .env file.")
+        else:
+            raise RuntimeError(f"Failed to load model '{model_name}': {error_msg}")
 
 
 def get_verdict(
@@ -113,8 +139,20 @@ Verdict:"""
         
         response = tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
         return response.strip().split('\n')[0]  # First line only
+    except RuntimeError as e:
+        error_msg = str(e)
+        if "HF_TOKEN" in error_msg or "token" in error_msg.lower():
+            return "🤖 LLM unavailable: HuggingFace token expired or invalid. Please update HF_TOKEN in .env file."
+        elif "not a valid model identifier" in error_msg:
+            return f"🤖 Model '{model_name}' not found. Please check MODEL_NAME in .env file."
+        else:
+            return f"🤖 LLM error: {error_msg}"
     except Exception as e:
-        return f"Error generating verdict: {str(e)}"
+        error_msg = str(e)
+        if "expired" in error_msg.lower():
+            return "🤖 Token expired: Please refresh your HuggingFace token in .env file."
+        else:
+            return f"🤖 Error generating verdict: {error_msg}"
 
 
 def get_intervention_cards(merchant_habits: list, budget_gaps: list) -> list[dict]:

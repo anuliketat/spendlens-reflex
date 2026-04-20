@@ -61,12 +61,14 @@ def get_gmail_service():
                     "Download it from Google Cloud Console and place in workspace root."
                 )
             flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            # Run local server on port 8080 for OAuth callback
-            # Use redirect_uri_trailing_slash=False to avoid trailing slash
-            creds = flow.run_local_server(
-                port=8080, 
-                open_browser=True,
-                redirect_uri_trailing_slash=False
+            # For web applications, we need to handle OAuth differently
+            # Generate authorization URL for manual completion
+            auth_url, _ = flow.authorization_url(prompt='consent')
+            
+            raise RuntimeError(
+                f"Gmail authentication required. Please visit this URL in a new tab to authorize: {auth_url}\n"
+                "After authorization, the authorization code will be in the URL. "
+                "This web app needs a different OAuth implementation for seamless authentication."
             )
         
         # Save token for future use
@@ -263,22 +265,33 @@ def list_potential_banks(service):
     if LLM_FILTER_AVAILABLE and len(rule_filtered) > 0:
         print(f"🤖 Using LLM to filter {len(rule_filtered)} potential senders...")
         llm_filtered = filter_senders_with_llm(rule_filtered)
-        return sorted(llm_filtered)
+        return sorted([{'email': s.get('email', s) if isinstance(s, dict) else s, 
+                        'name': s.get('name', '') if isinstance(s, dict) else '', 
+                        'count': s.get('count', 0) if isinstance(s, dict) else 0} 
+                      for s in llm_filtered], key=lambda x: x['email'])
     
     # Fallback to rule-based only
-    return sorted([s['email'] for s in rule_filtered])
+    return sorted([{'email': s['email'], 'name': s['name'], 'count': s['count']} 
+                   for s in rule_filtered], key=lambda x: x['email'])
 
 
-def get_emails_from_sender(service, sender_email: str, max_results: int = 500, last_year_only: bool = True):
+def get_emails_from_sender(service, sender_email: str, max_results: int = 500, last_year_only: bool = True, start_date=None, end_date=None):
     """
     Fetch all emails from a specific sender.
     By default, fetches last 1 year of emails.
+    Can optionally specify custom start_date and end_date (datetime objects).
     Returns list of email IDs and snippets.
     """
     try:
         # Build query with date filter
         query = f'from:{sender_email}'
-        if last_year_only:
+        
+        if start_date and end_date:
+            # Use custom date range
+            after_date = start_date.strftime('%Y/%m/%d')
+            before_date = end_date.strftime('%Y/%m/%d')
+            query = f'{query} after:{after_date} before:{before_date}'
+        elif last_year_only:
             date_query = _get_last_year_date_query()
             query = f'{query} {date_query}'
         

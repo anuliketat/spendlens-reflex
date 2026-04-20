@@ -8,34 +8,45 @@ import pdfplumber
 import base64
 import io
 import os
+from typing import Any
 
 
 class AppState(rx.State):
-    transactions: list[dict] = []
-    burn_rate: dict = {}
+    transactions: list[dict[str, Any]] = []
+    burn_rate: dict[str, Any] = {}
     verdict: str = ""
-    merchant_habits: list[dict] = []
-    interventions: list[dict] = []
-    archetype: dict = {}
-    budget: dict = {}
-    flagged_txn: dict = {}
+    merchant_habits: list[dict[str, Any]] = []
+    interventions: list[dict[str, Any]] = []
+    archetype: dict[str, Any] = {}
+    budget: dict[str, Any] = {}
+    flagged_txn: dict[str, Any] = {}
     show_flag_prompt: bool = False
-    uploaded_file: dict = {}
+    uploaded_file: dict[str, Any] = {}
     insights: str = ""
     processing: bool = False
     
     # Email import related
-    available_banks: list[str] = []
+    available_banks: list[dict[str, Any]] = []  # List of {email, name, count}
     selected_banks: list[str] = []
     email_import_status: str = ""
     email_import_progress: int = 0
-    extracted_emails: list[dict] = []
+    email_import_progress_max: int = 100
+    extracted_emails: list[dict[str, Any]] = []
+    
+    # Time period selection
+    time_period: str = "1y"  # Options: 1y, 6m, 3m, custom
+    custom_start_date: str = ""
+    custom_end_date: str = ""
+    
+    # Import completion tracking
+    import_completed: bool = False
+    total_transactions_imported: int = 0
 
     @rx.var
     def budget_pct_progress(self) -> int:
         return int(self.burn_rate.get("budget_pct", 0) * 100)
 
-    def load_dashboard(self):
+    def load_dashboard(self) -> None:
         with rx.session() as session:
             txns = session.exec(
                 select(Transaction)
@@ -85,7 +96,7 @@ class AppState(rx.State):
 
         self.merchant_habits = compute_merchant_habits(self.transactions)
 
-    def handle_flag_context(self, context: str):
+    def handle_flag_context(self, context: str) -> None:
         with rx.session() as session:
             txn = session.get(Transaction, self.flagged_txn["id"])
             if txn:
@@ -94,7 +105,7 @@ class AppState(rx.State):
                 session.commit()
         self.show_flag_prompt = False
 
-    def handle_upload(self, files):
+    def handle_upload(self, files: list[dict]) -> None:
         if files:
             self.processing = True
             file = files[0]
@@ -151,43 +162,77 @@ class AppState(rx.State):
             self.processing = False
 
     def fetch_email_banks(self):
-        """Fetch list of potential banks from Gmail inbox (last 1 year)."""
+        """Fetch list of potential banks from Gmail inbox."""
         self.processing = True
-        self.email_import_status = "Connecting to Gmail... Please complete authentication in the browser popup."
+        self.email_import_progress = 0
+        self.email_import_status = "🔐 Connecting to Gmail... Authentication popup will open in a new tab."
         yield  # Yield to prevent WebSocket timeout
         
         try:
             from spendlens.services.gmail_service import get_gmail_service, list_potential_banks
             
             service = get_gmail_service()
-            self.email_import_status = "✓ Gmail authenticated! Scanning for bank emails (last 1 year)..."
+            self.email_import_progress = 25
+            self.email_import_status = "✓ Gmail authenticated! Scanning for bank emails..."
             yield  # Yield during authentication
             
+            self.email_import_progress = 50
             self.email_import_status = "🤖 Analyzing senders with AI to find transaction alerts..."
             yield  # Yield before LLM processing
+            
             banks = list_potential_banks(service)
             
             self.available_banks = banks
-            self.email_import_status = f"✓ Found {len(banks)} verified transaction senders from last 1 year. Select banks to import."
+            self.email_import_progress = 100
+            self.email_import_status = f"✓ Found {len(banks)} verified transaction senders. Select banks and time period to import."
             
         except FileNotFoundError as e:
-            self.email_import_status = f"Error: {str(e)}"
+            self.email_import_status = f"❌ Gmail Setup Required: {str(e)}"
+        except RuntimeError as e:
+            if "authentication required" in str(e).lower():
+                self.email_import_status = f"🔐 Gmail Authentication Needed: Please complete OAuth setup first. {str(e)}"
+            else:
+                self.email_import_status = f"❌ Authentication Error: {str(e)}"
         except Exception as e:
-            self.email_import_status = f"Error fetching banks: {str(e)}"
+            error_msg = str(e)
+            if "mismatching_state" in error_msg:
+                self.email_import_status = "❌ CSRF Error: Please refresh the page and try Gmail authentication again."
+            else:
+                self.email_import_status = f"❌ Error fetching banks: {error_msg}"
         finally:
             self.processing = False
             yield
+    
+    def toggle_bank_selection(self, bank_email: str) -> None:
+        """Toggle selection of a bank."""
+        if bank_email in self.selected_banks:
+            self.selected_banks.remove(bank_email)
+        else:
+            self.selected_banks.append(bank_email)
+    
+    def set_time_period(self, period: str) -> None:
+        """Set the time period for data import."""
+        self.time_period = period
+    
+    def set_custom_dates(self, start_date: str, end_date: str) -> None:
+        """Set custom date range."""
+        self.custom_start_date = start_date
+        self.custom_end_date = end_date
 
     def import_from_email(self, banks: list[str]):
-        """Import transactions from selected email senders."""
+        """Import transactions from selected email senders with selected time period."""
         if not banks:
             self.email_import_status = "Please select at least one bank sender"
             return
         
         self.processing = True
+        self.import_completed = False
+        self.total_transactions_imported = 0
         self.selected_banks = banks
         total_banks = len(banks)
-        self.email_import_status = f"Starting import from {total_banks} bank(s)..."
+        self.email_import_status = f"Starting import from {total_banks} bank(s) for {self.time_period}..."
+        self.email_import_progress = 0
+        self.email_import_progress_max = total_banks * 2 + 10
         yield
         
         try:
@@ -197,31 +242,58 @@ class AppState(rx.State):
             service = get_gmail_service()
             all_emails = []
             
-            # Fetch emails from each selected bank (last 1 year by default)
+            # Get date range based on selected time period
+            from datetime import datetime, timedelta
+            end_date = datetime.now()
+            if self.time_period == "1y":
+                start_date = end_date - timedelta(days=365)
+            elif self.time_period == "6m":
+                start_date = end_date - timedelta(days=180)
+            elif self.time_period == "3m":
+                start_date = end_date - timedelta(days=90)
+            elif self.time_period == "custom":
+                start_date = datetime.strptime(self.custom_start_date, "%Y-%m-%d")
+                end_date = datetime.strptime(self.custom_end_date, "%Y-%m-%d")
+            else:
+                start_date = end_date - timedelta(days=365)
+            
+            # Fetch emails from each selected bank
             for i, bank in enumerate(banks, 1):
-                self.email_import_status = f"📧 Fetching from bank {i}/{total_banks}: {bank} (last 1 year)..."
+                progress_step = i
+                self.email_import_progress = progress_step
+                self.email_import_status = f"📧 Fetching emails from {i}/{total_banks}: {bank}..."
                 yield  # Yield to prevent WebSocket timeout
-                emails = get_emails_from_sender(service, bank, max_results=500, last_year_only=True)
+                
+                emails = get_emails_from_sender(
+                    service, 
+                    bank, 
+                    max_results=500,
+                    start_date=start_date,
+                    end_date=end_date
+                )
                 all_emails.extend(emails)
                 self.email_import_status = f"✓ Fetched {len(emails)} emails from {bank}"
                 yield
             
             if not all_emails:
-                self.email_import_status = "No emails found from selected banks"
+                self.email_import_status = "No emails found from selected banks in the selected period"
                 self.processing = False
                 return
             
             # Extract transactions
-            self.email_import_status = f"🔍 Extracting transactions from {len(all_emails)} emails using AI..."
+            self.email_import_progress = total_banks + 1
+            self.email_import_status = f"🔍 Extracting detailed transaction info from {len(all_emails)} emails..."
             yield  # Yield to prevent WebSocket timeout
             extracted = batch_extract_transactions(all_emails)
             
             successful_extractions = sum(1 for t in extracted if t.get("success"))
+            self.email_import_progress = total_banks + 5
             self.email_import_status = f"✓ Extracted {successful_extractions} transactions from {len(all_emails)} emails"
             yield  # Yield to prevent WebSocket timeout
             
             # Save to database
-            self.email_import_status = "Saving transactions to database..."
+            self.email_import_progress = total_banks + 6
+            self.email_import_status = "💾 Saving transactions to database..."
             saved_count = 0
             
             with rx.session() as session:
@@ -251,7 +323,9 @@ class AppState(rx.State):
                             
                             # Yield every 10 transactions to prevent timeout
                             if saved_count % 10 == 0:
-                                self.email_import_status = f"Saving transactions to database... ({saved_count}/{total_to_save})"
+                                progress_pct = int((saved_count / total_to_save) * 3) if total_to_save > 0 else 0
+                                self.email_import_progress = total_banks + 6 + progress_pct
+                                self.email_import_status = f"💾 Saving transactions to database... ({saved_count}/{total_to_save})"
                                 yield
                         except Exception as e:
                             print(f"Error saving transaction: {e}")
@@ -260,9 +334,13 @@ class AppState(rx.State):
                 session.commit()
             
             self.extracted_emails = extracted
-            self.email_import_status = f"✓ Successfully imported {saved_count} transactions from {len(all_emails)} emails (last 1 year)"
+            self.total_transactions_imported = saved_count
+            self.email_import_progress = self.email_import_progress_max
+            self.email_import_status = f"✓ Successfully imported {saved_count} transactions from {len(all_emails)} emails"
+            self.import_completed = True
+            yield
             
-            # Reload dashboard
+            # Reload dashboard to sync data
             self.load_dashboard()
             
         except FileNotFoundError as e:

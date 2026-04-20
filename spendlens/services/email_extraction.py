@@ -7,6 +7,7 @@ import os
 import json
 import asyncio
 import httpx
+import warnings
 from typing import Optional, Dict, Any
 from datetime import datetime
 import torch
@@ -22,31 +23,45 @@ _tokenizer = None
 
 HF_TOKEN = os.getenv("HF_TOKEN")
 if not HF_TOKEN:
-    raise ValueError("HF_TOKEN environment variable is required. Set it in your .env file.")
+    warnings.warn(
+        "⚠️  HF_TOKEN environment variable is NOT set!\n"
+        "   LLM-based features will not work.\n"
+        "   To enable:\n"
+        "   1. Copy .env.example to .env\n"
+        "   2. Get token from https://huggingface.co/settings/tokens\n"
+        "   3. Set HF_TOKEN in your .env file\n"
+        "   4. Restart your application",
+        UserWarning
+    )
+    HF_TOKEN = None
 
-# Model configuration
-FAST_LLM_MODE = os.getenv("FAST_LLM_MODE", "false").lower() == "true"
+# Model configuration - Use Phi-3 for all email processing tasks
 USE_LLM_FILTER = os.getenv("USE_LLM_FILTER", "true").lower() == "true"
 
-if FAST_LLM_MODE:
-    # Fast 3.8B model for quick classification (loads ~5x faster)
-    FILTER_MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
-    print("⚡ Using FAST mode: Phi-3-mini (3.8B parameters)")
-else:
-    # Accurate 32B model for best transaction extraction
-    FILTER_MODEL_NAME = os.getenv("MODEL_NAME", "mlabonne/Fin-R1")
-    print("🎯 Using ACCURATE mode: Fin-R1 (32B parameters)")
+FILTER_MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
+MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
 
-# For transaction extraction, always use Fin-R1 (more accurate)
-MODEL_NAME = os.getenv("MODEL_NAME", "mlabonne/Fin-R1")
+if HF_TOKEN:
+    print("🤖 Using Phi-3-mini (3.8B parameters) for all email processing")
+else:
+    FILTER_MODEL_NAME = None
+    MODEL_NAME = None
+    print("⚠️  Using rule-based methods only (HF_TOKEN not set)")
 
 
 def _load_extraction_model():
-    """Load Fin-R1 model with 4-bit quantization for extraction tasks."""
+    """Load Phi-3 model with 4-bit quantization for extraction tasks."""
     global _model, _tokenizer
     
     if _model is not None:
         return _model, _tokenizer
+    
+    if not HF_TOKEN:
+        raise RuntimeError(
+            "Cannot load model: HF_TOKEN is not set.\n"
+            "Please set HF_TOKEN in your .env file.\n"
+            "Get token from: https://huggingface.co/settings/tokens"
+        )
     
     try:
         quantization_config = BitsAndBytesConfig(
@@ -71,7 +86,7 @@ def _load_extraction_model():
             torch_dtype=torch.float16,
         )
         _model.eval()
-        print("✓ Loaded Fin-R1 for email extraction")
+        print("✓ Loaded Phi-3 for email extraction")
         return _model, _tokenizer
     except RuntimeError as e:
         if "flash_attention_2" in str(e).lower():
@@ -96,7 +111,7 @@ def _load_extraction_model():
 
 def extract_transaction_details(email_body: str, sender: str = "") -> Dict[str, Any]:
     """
-    Extract transaction details from email body using Fin-R1.
+    Extract transaction details from email body using Phi-3.
     
     Returns:
     {
@@ -155,6 +170,19 @@ JSON Response:"""
         result["success"] = True
         return result
         
+    except RuntimeError as e:
+        if "HF_TOKEN" in str(e):
+            print(f"⚠️  {str(e)}")
+            return {
+                "date": "",
+                "time": "",
+                "amount": 0,
+                "type": "other",
+                "merchant": sender,
+                "description": "LLM unavailable: HF_TOKEN not configured",
+                "success": False
+            }
+        raise
     except Exception as e:
         return {
             "date": "",
@@ -275,6 +303,16 @@ def _load_filter_model():
     if not USE_LLM_FILTER:
         raise RuntimeError("LLM filtering is disabled")
     
+    if not HF_TOKEN:
+        raise RuntimeError(
+            "Cannot load filter model: HF_TOKEN is not set.\n"
+            "Please set HF_TOKEN in your .env file.\n"
+            "Get token from: https://huggingface.co/settings/tokens"
+        )
+    
+    if not FILTER_MODEL_NAME:
+        raise RuntimeError("FILTER_MODEL_NAME is not configured")
+    
     try:
         # Use 4-bit quantization for faster loading
         quantization_config = BitsAndBytesConfig(
@@ -302,15 +340,17 @@ def _load_filter_model():
         _filter_model.eval()
         print(f"✓ Loaded filter model")
         return _filter_model, _filter_tokenizer
-    except Exception as e:
+    except RuntimeError as e:
+        if "HF_TOKEN" in str(e):
+            print(f"⚠️  {str(e)}")
+            raise
         print(f"⚠ Failed to load filter model: {e}")
         raise
 
 
 def filter_senders_with_llm(senders_data: list[dict]) -> list[str]:
     """
-    Use LLM to filter sender emails and identify true transaction alerts.
-    Uses FAST_LLM_MODE model (Phi-3-mini for speed, or Fin-R1 for accuracy).
+    Use Phi-3 to filter sender emails and identify true transaction alerts.
     
     Args:
         senders_data: List of dicts with 'email', 'name', 'subjects', 'count'
@@ -387,6 +427,12 @@ Response:"""
         print("⚠ LLM returned no valid senders, using rule-based results")
         return [s['email'] for s in senders_data]
         
+    except RuntimeError as e:
+        if "HF_TOKEN" in str(e):
+            print(f"⚠️  {str(e)}")
+            print("⚠  Using rule-based filtering instead")
+            return [s['email'] for s in senders_data]
+        raise
     except Exception as e:
         print(f"⚠ LLM filtering failed: {e}. Using rule-based results.")
         return [s['email'] for s in senders_data]
